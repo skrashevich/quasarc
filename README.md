@@ -146,6 +146,10 @@ adb forward tcp:19875 tcp:PORT
 
 Для работы с кадрами из Go используйте пакет `github.com/skrashevich/quasarc/protocol`. Функция `protocol.NewBus` принимает открытое `net.Conn`. Метод `ReadFrame` читает кадр, `VisitMessages` перебирает сообщения внутри кадра, а `WriteFrame` отправляет кадр. Сигнатуры и типы доступны через `go doc github.com/skrashevich/quasarc/protocol`.
 
+## E2E-тесты
+
+При пуше в `main` и в pull request GitHub Actions собирает `quasarc` и запускает его внутри эмулятора КУЯСЭ 1.5.0 на прошивках Станции 2 и Мини первого поколения. В режиме `stub` тесты проверяют поиск сервиса в `quasar.cfg`, отправку команды начала диалога и ответ `alice-state` в двух форматах шины, чтение кадра `yio_audio` и код выхода при тайм-ауте. Прогон можно запустить вручную на вкладке [Actions → Kuyase E2E](https://github.com/skrashevich/quasarc/actions/workflows/kuyase.yml).
+
 ## Лицензия
 
 Проект распространяется по лицензии [Apache License 2.0](LICENSE).

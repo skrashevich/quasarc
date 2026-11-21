@@ -1,0 +1,89 @@
+name: Kuyase E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E (${{ matrix.board }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [station2, yandexmini]
+    env:
+      BOARD: ${{ matrix.board }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build CLI and E2E tests for the guest
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p "$RUNNER_TEMP/guest"
+          go build -trimpath -o "$RUNNER_TEMP/guest/quasarc" .
+          go test -tags kuyase -c -o "$RUNNER_TEMP/guest/kuyase.test" ./e2e
+
+      - name: Install Kuyase 1.5.0 and prepare the firmware
+        working-directory: ${{ runner.temp }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm ipxe-qemu python3-venv
+          python3 -m venv venv
+          venv/bin/pip install ubi-reader==0.8.16
+
+          mkdir kuyase
+          curl -fsSL --retry 3 --max-time 120 -o kuyase.tar.gz \
+            https://github.com/vypivshiy/kuyase/releases/download/1.5.0/kuyase-headless-linux64.tar.gz
+          echo 'eae7afcca46f12252e96f6a61c6ee8638fb0b7d0ea0995b6082ae0dc44e2ce1f  kuyase.tar.gz' | sha256sum -c -
+          tar -xzf kuyase.tar.gz -C kuyase
+          mv kuyase/kuyase-headless kuyase/kuyase
+
+          # Shared firmware extractor pins both the public OTA and its root filesystem by SHA-256.
+          curl -fsSL --retry 3 --max-time 60 -o prepare.py \
+            https://raw.githubusercontent.com/skrashevich/quasar-bridge/9089a19816e33270b3c10861c9fbb726d42bf7d0/scripts/kuyase/prepare.py
+          echo 'd9cd7e008e1ccd59655cd6e9c087127b8bfd69d68821d0a895c82c08767a7e5d  prepare.py' | sha256sum -c -
+          venv/bin/python prepare.py --board "$BOARD" --emulator-dir kuyase --output firmware
+
+      - name: Run quasarc inside the station VM
+        working-directory: ${{ runner.temp }}/kuyase
+        run: |
+          # QEMU exposes the host loopback to the guest at 10.0.2.2.
+          python3 -m http.server 18943 --bind 127.0.0.1 --directory "$RUNNER_TEMP/guest" &
+          server=$!
+          trap 'kill "$server"' EXIT
+          ./kuyase run --headless --board "$BOARD" --mode stub --snapshot --exec '
+            set -eu
+            cd /tmp
+            for file in quasarc kuyase.test; do
+              wget -qO "$file" "http://10.0.2.2:18943/$file"
+              chmod 755 "$file"
+            done
+            ./kuyase.test -test.v -test.timeout=90s
+          '
+
+      - name: Save firmware and VM logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kuyase-${{ matrix.board }}-logs
+          path: |
+            ${{ runner.temp }}/firmware/prepare.log
+            ${{ runner.temp }}/kuyase/work/*-serial.log
+          if-no-files-found: ignore
+          retention-days: 7
