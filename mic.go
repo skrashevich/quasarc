@@ -4,12 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-)
 
-type micResult struct {
-	Muted         bool `json:"muted"`
-	HardwareMuted bool `json:"hardware_muted"`
-}
+	"github.com/skrashevich/quasarc/station"
+)
 
 func runMic(args []string, out, errOut io.Writer) int {
 	const usage = "usage: quasarc mic get|mute|unmute"
@@ -21,7 +18,13 @@ func runMic(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, usage)
 		return 2
 	}
-	result, err := localMic(args[0])
+	var result station.MicStatus
+	var err error
+	if args[0] == "get" {
+		result, err = station.Microphone()
+	} else {
+		result, err = station.SetMicrophoneMuted(args[0] == "mute")
+	}
 	if err == nil {
 		err = json.NewEncoder(out).Encode(result)
 	}
@@ -30,16 +33,4 @@ func runMic(args []string, out, errOut io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-func maxMicState(f frame) (any, error) {
-	ff, err := unpack(f)
-	if err != nil {
-		return nil, err
-	}
-	n, ok := ff.number(1)
-	if !ok || (n != 0 && n != 1) {
-		return nil, fmt.Errorf("invalid audiod MicsState")
-	}
-	return n == 1, nil
 }

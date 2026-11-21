@@ -2,20 +2,20 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"net"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/skrashevich/quasarc/protocol"
 )
 
 func TestBluetoothAndAlarmCLI(t *testing.T) {
 	field := func(id uint64, payload ...byte) []byte {
-		return frame{ID: id, WT: 2, Payload: payload}.encodeDirect()
+		return protocol.Frame{ID: id, WT: 2, Payload: payload}.EncodeDirect()
 	}
 	sdk := func(body []byte) []byte {
-		return frame{ID: 85, WT: 2, Payload: field(34, body...)}.encodeEnvelope()
+		return protocol.Frame{ID: 85, WT: 2, Payload: field(34, body...)}.EncodeEnvelope()
 	}
 	maxSettings := field(47, 10, 0, 26, 8, 8, 7, 16, 1, 24, 160, 156, 1)
 	linuxPlayer := field(8, field(5, 8, 1, 32, 0)...)
@@ -85,39 +85,5 @@ func TestBluetoothAndAlarmCLI(t *testing.T) {
 				t.Fatalf("exit %d, stderr %q, got %s; want %s", code, &diag, &out, tc.want)
 			}
 		})
-	}
-}
-
-func TestBluetoothSystemSources(t *testing.T) {
-	var linux bluetoothResult
-	linux.readLinuxController("hci0: Type: Primary\n BD Address: adapter\n UP RUNNING PSCAN ISCAN\n")
-	if !reflect.DeepEqual(linux, bluetoothResult{Powered: new(true), Connectable: new(true), Discoverable: new(true)}) {
-		t.Fatalf("controller: %+v", linux)
-	}
-	linux.readLinuxController(" DOWN\n")
-	if *linux.Powered || *linux.Connectable || *linux.Discoverable {
-		t.Fatal("controller is down")
-	}
-	const playback = "**** List of PLAYBACK Bluetooth Devices ****\nhci0: paired-device\n  A2DP (SBC): audio\n"
-	const capture = "**** List of CAPTURE Bluetooth Devices ****\nhci0: audio-source\n  SCO (CVSD): audio\n"
-	if hasA2DPCapture(playback+capture) || !hasA2DPCapture(playback+capture+"  A2DP (SBC): audio\n") {
-		t.Fatal("expected only incoming A2DP to count as an audio connection")
-	}
-	const header = "Bluetooth Status\n  state: ON\n\n"
-	const a2dp = "Profile: A2dpSinkService\n  StateMachine: name=A2dpSinkStateMachine state="
-	const other = "Profile: HidHostService\n  StateMachine: name=A2dpSinkStateMachine state=Connected\n"
-	for _, tc := range []struct {
-		profiles string
-		want     string
-	}{
-		{other, "null"}, {a2dp + "Disconnected\n" + other, "false"},
-		{a2dp + "Pending\n", "null"}, {a2dp + "Connected\n", "true"},
-	} {
-		var android bluetoothResult
-		android.readAndroidManager(header + tc.profiles)
-		value, err := json.Marshal(android.AudioConnected)
-		if err != nil || android.Powered == nil || !*android.Powered || string(value) != tc.want {
-			t.Fatalf("profiles %q: connected %s, powered %v, error %v", tc.profiles, value, android.Powered, err)
-		}
 	}
 }

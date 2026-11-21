@@ -1,10 +1,12 @@
-package main
+package station
 
 import (
 	"encoding/binary"
 	"errors"
 	"math"
 	"unicode/utf8"
+
+	"github.com/skrashevich/quasarc/protocol"
 )
 
 func (ff fields) text(id uint64) *string {
@@ -16,7 +18,7 @@ func (ff fields) text(id uint64) *string {
 	return &s
 }
 
-func metricaUUID(f frame) (any, error) {
+func metricaUUID(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
@@ -26,14 +28,11 @@ func metricaUUID(f frame) (any, error) {
 	if uuid == nil || *uuid == "" {
 		return nil, nil
 	}
-	return struct {
-		UUID            string  `json:"uuid"`
-		MetricaDeviceID *string `json:"metrica_device_id"`
-	}{*uuid, ff.text(7)}, nil
+	return MetricaUUID{*uuid, ff.text(7)}, nil
 }
 
 // SDKState is field 34 of IOEvent. Other IO events share the subscription.
-func sdkFields(f frame) (fields, error) {
+func sdkFields(f protocol.Frame) (fields, error) {
 	event, err := unpack(f)
 	if err != nil {
 		return nil, err
@@ -45,7 +44,7 @@ func sdkFields(f frame) (fields, error) {
 	return unpack(sdk)
 }
 
-type updateResult struct {
+type UpdateStatus struct {
 	State            *string  `json:"state"`
 	Code             *int32   `json:"code"`
 	IsCritical       *bool    `json:"is_critical"`
@@ -53,24 +52,24 @@ type updateResult struct {
 	TargetVersion    *string  `json:"target_version"`
 }
 
-func sdkUpdateStatus(f frame) (any, error) {
+func sdkUpdateStatus(f protocol.Frame) (any, error) {
 	sdk, err := sdkFields(f)
 	if err != nil || sdk == nil {
 		return nil, err
 	}
 	update, ok := sdk[7]
 	if !ok {
-		return updateResult{}, nil
+		return UpdateStatus{}, nil
 	}
 	return updateStatus(update)
 }
 
-func updateStatus(f frame) (any, error) {
+func updateStatus(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
 	}
-	result := updateResult{TargetVersion: ff.text(4)}
+	result := UpdateStatus{TargetVersion: ff.text(4)}
 	if code, ok := ff.number(1); ok {
 		state := enumName(code, "", "none", "downloading", "applying")
 		result.State = &state
@@ -90,14 +89,14 @@ func updateStatus(f frame) (any, error) {
 	return result, nil
 }
 
-type notificationResult struct {
+type NotificationStatus struct {
 	HasNotifications *bool   `json:"has_notifications"`
 	Count            *int32  `json:"count"`
 	Mode             *string `json:"mode"`
 }
 
 // Android ACTIVE and SDK AVAILABLE both indicate an available notification.
-func (n *notificationResult) setMode(code int32) {
+func (n *NotificationStatus) setMode(code int32) {
 	label := enumName(code, "none", "available", "passive")
 	n.Mode = &label
 	if label != "unknown" {
@@ -106,24 +105,24 @@ func (n *notificationResult) setMode(code int32) {
 	}
 }
 
-func sdkNotificationStatus(f frame) (any, error) {
+func sdkNotificationStatus(f protocol.Frame) (any, error) {
 	sdk, err := sdkFields(f)
 	if err != nil || sdk == nil {
 		return nil, err
 	}
-	var result notificationResult
+	var result NotificationStatus
 	if code, ok := sdk.number(12); ok {
 		result.setMode(code)
 	}
 	return result, nil
 }
 
-func notificationStatus(f frame) (any, error) {
+func notificationStatus(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
 	}
-	var result notificationResult
+	var result NotificationStatus
 	if code, ok := ff.number(2); ok {
 		result.setMode(code)
 	}
@@ -136,4 +135,9 @@ func notificationStatus(f frame) (any, error) {
 		result.HasNotifications = &has
 	}
 	return result, nil
+}
+
+type MetricaUUID struct {
+	UUID            string  `json:"uuid"`
+	MetricaDeviceID *string `json:"metrica_device_id"`
 }

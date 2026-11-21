@@ -1,15 +1,19 @@
-package main
+package station
 
-import "fmt"
+import (
+	"fmt"
 
-type fields map[uint64]frame
+	"github.com/skrashevich/quasarc/protocol"
+)
 
-func unpack(f frame) (fields, error) {
+type fields map[uint64]protocol.Frame
+
+func unpack(f protocol.Frame) (fields, error) {
 	if f.WT != 2 {
 		return nil, fmt.Errorf("message %d has wire type %d, expected bytes", f.ID, f.WT)
 	}
 	values := fields{}
-	err := walkFields(f.Payload, func(field frame) error { values[field.ID] = field; return nil })
+	err := protocol.WalkFields(f.Payload, func(field protocol.Frame) error { values[field.ID] = field; return nil })
 	return values, err
 }
 
@@ -18,7 +22,7 @@ func (ff fields) number(id uint64) (int32, bool) {
 	if !ok || f.WT != 0 {
 		return 0, false
 	}
-	v, n := decodeVarint(f.Payload)
+	v, n := protocol.DecodeVarint(f.Payload)
 	return int32(v), n != 0
 }
 
@@ -61,20 +65,17 @@ func enumName(code int32, names ...string) string {
 	return "unknown"
 }
 
-func aliceState(f frame) (any, error) {
+func aliceState(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
 	}
 	code, _ := ff.number(1)
 	startup, _ := ff.number(5)
-	return struct {
-		stateResult
-		HasStartupRequirements bool `json:"has_startup_requirements"`
-	}{stateResult{enumName(code, "idle", "listening", "speaking", "busy", "", "shazam", "none"), code}, startup != 0}, nil
+	return AliceState{StateCode{enumName(code, "idle", "listening", "speaking", "busy", "", "shazam", "none"), code}, startup != 0}, nil
 }
 
-func wifiStatus(f frame) (any, error) {
+func wifiStatus(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
@@ -85,16 +86,13 @@ func wifiStatus(f frame) (any, error) {
 		value := enumName(n, "weak", "good", "strong", "excellent")
 		signal = &value
 	}
-	return struct {
-		stateResult
-		Signal *string `json:"signal"`
-	}{stateResult{enumName(code, "not_connected", "connecting", "connected_no_internet", "connected", "not_chosen"), code}, signal}, nil
+	return WiFiStatus{StateCode{enumName(code, "not_connected", "connecting", "connected_no_internet", "connected", "not_chosen"), code}, signal}, nil
 }
 
 // Max sends scalar enums directly. Linux wraps the enum in field 1.
-func statusCode(f frame) (int32, error) {
+func statusCode(f protocol.Frame) (int32, error) {
 	if f.WT == 0 {
-		v, n := decodeVarint(f.Payload)
+		v, n := protocol.DecodeVarint(f.Payload)
 		if n != 0 {
 			return int32(v), nil
 		}
@@ -109,17 +107,17 @@ func statusCode(f frame) (int32, error) {
 	return 0, fmt.Errorf("missing status code in message %d", f.ID)
 }
 
-func setupStatus(f frame) (any, error) {
+func setupStatus(f protocol.Frame) (any, error) {
 	code, err := statusCode(f)
-	return stateResult{enumName(code, "unknown", "configuring", "configured", "data_reset_wait_confirm", "data_reset_in_progress"), code}, err
+	return StateCode{enumName(code, "unknown", "configuring", "configured", "data_reset_wait_confirm", "data_reset_in_progress"), code}, err
 }
 
-func brickStatus(f frame) (any, error) {
+func brickStatus(f protocol.Frame) (any, error) {
 	code, err := statusCode(f)
-	return stateResult{enumName(code, "", "brick", "not_brick", "unknown"), code}, err
+	return StateCode{enumName(code, "", "brick", "not_brick", "unknown"), code}, err
 }
 
-func ntpStatus(f frame) (any, error) {
+func ntpStatus(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
@@ -128,12 +126,10 @@ func ntpStatus(f frame) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("missing NTP synchronization flag")
 	}
-	return struct {
-		Synchronized bool `json:"synchronized"`
-	}{value != 0}, nil
+	return NTPStatus{value != 0}, nil
 }
 
-func groupEvent(f frame) (any, error) {
+func groupEvent(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
@@ -145,15 +141,12 @@ func groupEvent(f frame) (any, error) {
 	return groupStatus(group)
 }
 
-func groupStatus(f frame) (any, error) {
+func groupStatus(f protocol.Frame) (any, error) {
 	ff, err := unpack(f)
 	if err != nil {
 		return nil, err
 	}
-	result := struct {
-		Role                 *string `json:"role"`
-		MicrophoneGroupState *string `json:"microphone_group_state"`
-	}{}
+	result := GroupStatus{}
 	if code, ok := ff.number(1); ok {
 		label := enumName(code, "stand_alone", "leader", "follower")
 		result.Role = &label
@@ -169,4 +162,23 @@ func groupStatus(f frame) (any, error) {
 		}
 	}
 	return result, nil
+}
+
+type AliceState struct {
+	StateCode
+	HasStartupRequirements bool `json:"has_startup_requirements"`
+}
+
+type WiFiStatus struct {
+	StateCode
+	Signal *string `json:"signal"`
+}
+
+type NTPStatus struct {
+	Synchronized bool `json:"synchronized"`
+}
+
+type GroupStatus struct {
+	Role                 *string `json:"role"`
+	MicrophoneGroupState *string `json:"microphone_group_state"`
 }

@@ -1,9 +1,9 @@
-package main
+package protocol
 
 // Frame IDs are field numbers of quasar.proto.QuasarMessage in QuasarProto.proto,
 // a descriptor embedded in /system/vendor/quasar/maind on Station Max (yandexstation_2).
 func init() {
-	buildMaps(buildMax, []msgEntry{
+	entries := []Message{
 		{1, "request_id", "string", "string"},
 		{3, "alice_state", "AliceState", "message"},
 		{4, "wifi_list_request", "EmptyMessage", "message"},
@@ -147,5 +147,11 @@ func init() {
 		{155, "iot_request", "IotRequest", "message"},
 		{156, "iot_state", "IotState", "message"},
 		{157, "service_name_ready", "string", "string"},
-	})
+	}
+	for _, e := range entries {
+		tables["max"].add(e)
+		if e.ID <= sharedIDLimit {
+			tables["linux"].add(e)
+		}
+	}
 }

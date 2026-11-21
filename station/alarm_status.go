@@ -1,8 +1,12 @@
-package main
+package station
 
-import "fmt"
+import (
+	"fmt"
 
-type alarmResult struct {
+	"github.com/skrashevich/quasarc/protocol"
+)
+
+type AlarmStatus struct {
 	AlarmPlaying         *bool  `json:"alarm_playing"`
 	TimerPlaying         *bool  `json:"timer_playing"`
 	SetAlarmsTimersCount *int32 `json:"set_alarms_timers_count"`
@@ -12,7 +16,7 @@ type alarmResult struct {
 	VolumeRaiseStepMS    *int32 `json:"volume_raise_step_ms"`
 }
 
-func sdkAlarmStatus(f frame) (any, error) {
+func sdkAlarmStatus(f protocol.Frame) (any, error) {
 	sdk, err := sdkFields(f)
 	if err != nil || sdk == nil {
 		return nil, err
@@ -21,7 +25,7 @@ func sdkAlarmStatus(f frame) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := alarmResult{
+	result := AlarmStatus{
 		AlarmPlaying:         alarms.optionalBool(2),
 		TimerPlaying:         alarms.optionalBool(3),
 		SetAlarmsTimersCount: alarms.optionalInt(4),
@@ -41,12 +45,12 @@ func sdkAlarmStatus(f frame) (any, error) {
 // Max publishes TimersState and AlarmsState on the same subscription. Either
 // may arrive first, in a compound packet or in separate packets.
 type alarmSnapshot struct {
-	result     alarmResult
+	result     AlarmStatus
 	haveTimers bool
 	haveAlarms bool
 }
 
-func (s *alarmSnapshot) accept(f frame) (any, error) {
+func (s *alarmSnapshot) accept(f protocol.Frame) (any, error) {
 	switch f.ID {
 	case 46:
 		count, playing, err := timerStatus(f)
@@ -75,13 +79,13 @@ func (s *alarmSnapshot) accept(f frame) (any, error) {
 	return nil, nil
 }
 
-func timerStatus(f frame) (int32, *bool, error) {
+func timerStatus(f protocol.Frame) (int32, *bool, error) {
 	if f.WT != 2 {
 		return 0, nil, fmt.Errorf("invalid timers_state wire type %d", f.WT)
 	}
 	var count int32
 	playing, allKnown := false, true
-	err := walkFields(f.Payload, func(timer frame) error {
+	err := protocol.WalkFields(f.Payload, func(timer protocol.Frame) error {
 		if timer.ID != 1 {
 			return nil
 		}
