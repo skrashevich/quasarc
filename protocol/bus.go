@@ -147,30 +147,39 @@ func (b *Bus) ReadFrame() (*Frame, error) {
 	if b.fr == Bare {
 		return b.nextBare()
 	}
-	hdr := make([]byte, 4)
-	if _, err := io.ReadFull(b.r, hdr); err != nil {
-		return nil, err
-	}
-	n := le32(hdr)
-	if n == 0 || n > maxPayload {
-		return nil, fmt.Errorf("message length %d out of range", n)
-	}
-	buf := make([]byte, int(n))
-	if _, err := io.ReadFull(b.r, buf); err != nil {
+	buf, err := b.ReadMessageLimit(maxPayload)
+	if err != nil {
 		return nil, err
 	}
 	var f Frame
-	var err error
 	if b.fr == Envelope {
 		f, err = DecodeEnvelope(buf)
 	} else {
 		f, err = DecodeDirect(buf)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("in %d byte message: %w", n, err)
+		return nil, fmt.Errorf("in %d byte message: %w", len(buf), err)
 	}
 	f.raw = buf
 	return &f, nil
+}
+
+// ReadMessageLimit reads one length-prefixed protobuf without assuming a
+// particular envelope. It checks the size before allocating the message.
+func (b *Bus) ReadMessageLimit(limit uint32) ([]byte, error) {
+	var header [4]byte
+	if _, err := io.ReadFull(b.r, header[:]); err != nil {
+		return nil, err
+	}
+	n := le32(header[:])
+	if n == 0 || n > uint64(min(limit, maxPayload)) {
+		return nil, fmt.Errorf("message length %d out of range", n)
+	}
+	body := make([]byte, n)
+	if _, err := io.ReadFull(b.r, body); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 // nextBare reads one envelope message without a length header.
@@ -214,11 +223,9 @@ func (b *Bus) WriteFrame(f Frame) error {
 		msg := b.EncodeFrame(f)
 		n := len(msg)
 		msg = append([]byte{byte(n), byte(n >> 8), byte(n >> 16), byte(n >> 24)}, msg...)
-		_, err := b.c.Write(msg)
-		return err
+		return b.WriteRaw(msg)
 	}
-	_, err := b.c.Write(b.EncodeFrame(f))
-	return err
+	return b.WriteRaw(b.EncodeFrame(f))
 }
 
 // EncodeFrame returns the protobuf bytes without a length prefix. For frames
@@ -236,7 +243,10 @@ func (b *Bus) EncodeFrame(f Frame) []byte {
 
 // WriteRaw sends bytes exactly as given.
 func (b *Bus) WriteRaw(raw []byte) error {
-	_, err := b.c.Write(raw)
+	n, err := b.c.Write(raw)
+	if err == nil && n != len(raw) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 

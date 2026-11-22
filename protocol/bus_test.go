@@ -37,6 +37,14 @@ func (c *memConn) SetReadDeadline(t time.Time) error {
 
 func (c *memConn) Close() error { return nil }
 
+func TestReadMessageLimitBeforeBody(t *testing.T) {
+	header := binary.LittleEndian.AppendUint32(nil, 4097)
+	bus := protocol.NewBus(&memConn{r: bytes.NewReader(header)}, protocol.Envelope, protocol.Envelope)
+	if _, err := bus.ReadMessageLimit(4096); err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("expected a length error before reading the body, got %v", err)
+	}
+}
+
 func unhex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
